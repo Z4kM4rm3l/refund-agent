@@ -16,6 +16,12 @@ ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 # via CLAUDE_MODEL in .env if a different tier is desired (e.g. for cost).
 CLAUDE_MODEL = os.environ.get("CLAUDE_MODEL", "claude-opus-4-8")
 
+# Fast model used for short, customer-facing conversational replies (asking
+# for order info, confirming an order, drafting the final decision reply).
+# Decision-making / structured-JSON tool calls stay on CLAUDE_MODEL — only
+# free-text prose generation moves to Haiku for latency.
+FAST_REPLY_MODEL = os.environ.get("FAST_REPLY_MODEL", "claude-haiku-4-5-20251001")
+
 DB_PATH = Path(os.environ.get("DB_PATH", BACKEND_DIR / "db" / "melodymaxgear.db"))
 SCHEMA_PATH = BACKEND_DIR / "db" / "schema.sql"
 POLICY_PATH = Path(os.environ.get("POLICY_PATH", PROJECT_ROOT / "policy" / "refund_policy.md"))
