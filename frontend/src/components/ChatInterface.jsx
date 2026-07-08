@@ -41,6 +41,7 @@ function formatTime(ts) {
 export default function ChatInterface({ messages, onSend, isTyping, disabled, isSending, streamingMessageId }) {
   const [inputValue, setInputValue] = useState("");
   const historyRef = useRef(null);
+  const textareaRef = useRef(null);
   const inputBlocked = disabled || isSending;
 
   useEffect(() => {
@@ -48,15 +49,43 @@ export default function ChatInterface({ messages, onSend, isTyping, disabled, is
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages, isTyping]);
 
+  // Grows the textarea to fit its content (CSS max-height + overflow-y:auto
+  // caps it at ~4 lines and takes over with internal scrolling beyond that).
+  const autoResize = (el) => {
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  };
+
+  const handleChange = (e) => {
+    setInputValue(e.target.value);
+    autoResize(e.target);
+  };
+
   const handleSend = (text) => {
     const trimmed = (text ?? inputValue).trim();
     if (!trimmed || inputBlocked) return;
-    onSend(trimmed);
+
+    // Clear the DOM node directly and *first* — synchronous, so the box
+    // snaps back to single-line height and the placeholder reappears in the
+    // same paint, before onSend ever kicks off the API call. Letting this
+    // wait on the React state update (below) alone can show a stale frame.
+    const el = textareaRef.current;
+    if (el) {
+      el.value = "";
+      autoResize(el);
+    }
     setInputValue("");
+
+    onSend(trimmed);
   };
 
   const handleKeyDown = (e) => {
-    if (e.key === "Enter") handleSend();
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    }
+    // Shift+Enter falls through to the textarea's default behavior — a plain newline.
   };
 
   return (
@@ -105,12 +134,13 @@ export default function ChatInterface({ messages, onSend, isTyping, disabled, is
       </div>
 
       <div className="chat-input-row">
-        <input
-          type="text"
+        <textarea
+          ref={textareaRef}
+          rows={1}
           placeholder={disabled ? "Select a customer first…" : isSending ? "Waiting for a reply…" : "Type a message…"}
           value={inputValue}
           disabled={inputBlocked}
-          onChange={(e) => setInputValue(e.target.value)}
+          onChange={handleChange}
           onKeyDown={handleKeyDown}
         />
         <button

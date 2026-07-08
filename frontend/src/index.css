@@ -602,29 +602,37 @@ button {
 /* Input row */
 .chat-input-row {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: 10px;
   padding: 12px 16px 16px;
 }
 
-.chat-input-row input {
+.chat-input-row textarea {
   flex: 1;
   background: var(--bg-input);
   border: 1px solid var(--border-light);
   border-radius: var(--radius-md);
-  padding: 12px 14px;
+  padding: 11px 14px;
   color: var(--text-primary);
   font-family: var(--font-sans);
   font-size: 13.5px;
+  line-height: 1.4;
+  min-height: 44px;
+  max-height: 104px;
+  /* Height is driven imperatively (see autoResize in ChatInterface.jsx) —
+     no CSS transition here, so submit snaps back to single-line instantly
+     instead of visibly animating shut. */
+  resize: none;
+  overflow-y: auto;
 }
-.chat-input-row input:focus {
+.chat-input-row textarea:focus {
   outline: none;
   border-color: var(--accent-amber);
 }
-.chat-input-row input::placeholder {
+.chat-input-row textarea::placeholder {
   color: var(--text-muted);
 }
-.chat-input-row input:disabled {
+.chat-input-row textarea:disabled {
   opacity: 0.5;
 }
 
