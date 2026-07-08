@@ -38,9 +38,10 @@ function formatTime(ts) {
   }
 }
 
-export default function ChatInterface({ messages, onSend, isTyping, disabled, streamingMessageId }) {
+export default function ChatInterface({ messages, onSend, isTyping, disabled, isSending, streamingMessageId }) {
   const [inputValue, setInputValue] = useState("");
   const historyRef = useRef(null);
+  const inputBlocked = disabled || isSending;
 
   useEffect(() => {
     const el = historyRef.current;
@@ -49,7 +50,7 @@ export default function ChatInterface({ messages, onSend, isTyping, disabled, st
 
   const handleSend = (text) => {
     const trimmed = (text ?? inputValue).trim();
-    if (!trimmed || disabled) return;
+    if (!trimmed || inputBlocked) return;
     onSend(trimmed);
     setInputValue("");
   };
@@ -95,7 +96,7 @@ export default function ChatInterface({ messages, onSend, isTyping, disabled, st
             key={preset}
             type="button"
             className="btn-preset"
-            disabled={disabled}
+            disabled={inputBlocked}
             onClick={() => handleSend(preset)}
           >
             {preset}
@@ -106,16 +107,16 @@ export default function ChatInterface({ messages, onSend, isTyping, disabled, st
       <div className="chat-input-row">
         <input
           type="text"
-          placeholder={disabled ? "Select a customer first…" : "Type a message…"}
+          placeholder={disabled ? "Select a customer first…" : isSending ? "Waiting for a reply…" : "Type a message…"}
           value={inputValue}
-          disabled={disabled}
+          disabled={inputBlocked}
           onChange={(e) => setInputValue(e.target.value)}
           onKeyDown={handleKeyDown}
         />
         <button
           type="button"
           className="btn-pick"
-          disabled={disabled || !inputValue.trim()}
+          disabled={inputBlocked || !inputValue.trim()}
           onClick={() => handleSend()}
           aria-label="Send message"
         >

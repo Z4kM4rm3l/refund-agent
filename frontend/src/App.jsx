@@ -18,6 +18,7 @@ export default function App() {
 
   const [chatMessages, setChatMessages] = useState([]);
   const [isTyping, setIsTyping] = useState(false);
+  const [isSending, setIsSending] = useState(false);
   const [streamingMessageId, setStreamingMessageId] = useState(null);
 
   // Reasoning entries from turns already completed in this conversation — the
@@ -28,6 +29,13 @@ export default function App() {
   const [currentDecision, setCurrentDecision] = useState(null);
   const [currentStatus, setCurrentStatus] = useState(null);
   const [currentOrder, setCurrentOrder] = useState(null);
+
+  // Guards against overlapping handleSend calls (e.g. the customer switch
+  // mid-turn, or a race between two sends) applying a stale turn's events
+  // on top of a newer one's. Bumped at the start of every handleSend and on
+  // customer switch; each in-flight call only applies its state updates
+  // while its own id is still the active one.
+  const activeRequestIdRef = useRef(0);
 
   const [adminData, setAdminData] = useState({ refundRequests: [], reasoningLogs: [] });
 
@@ -54,6 +62,11 @@ export default function App() {
   // -- customer switch: start a fresh conversation ---------------------------
 
   const handleSelectCustomer = (customer) => {
+    // Invalidate any in-flight request for the conversation we're leaving —
+    // its events must not land on top of the new conversation's state.
+    activeRequestIdRef.current += 1;
+    setIsSending(false);
+
     setSelectedCustomer(customer);
     setConversationId(newConversationId());
     setChatMessages([]);
@@ -72,13 +85,20 @@ export default function App() {
   // -- sending a chat message (streamed) --------------------------------------
 
   const handleSend = async (text) => {
-    if (!selectedCustomer) return;
+    // isSending is the primary guard (also disables the UI — see ChatInterface);
+    // requestId is defense-in-depth against anything that still slips through
+    // (e.g. a customer switch invalidating this call mid-flight).
+    if (!selectedCustomer || isSending) return;
+
+    const requestId = ++activeRequestIdRef.current;
+    const isStale = () => requestId !== activeRequestIdRef.current;
 
     setChatMessages((prev) => [
       ...prev,
       { id: `c-${Date.now()}`, role: "customer", text, timestamp: new Date().toISOString() },
     ]);
     setIsTyping(true);
+    setIsSending(true);
 
     const agentMessageId = `a-${Date.now()}`;
     const reasoningBase = reasoningBaseRef.current;
@@ -90,6 +110,8 @@ export default function App() {
       await streamChatMessage(
         { message: text, conversationId, customerId: selectedCustomer.id },
         (event) => {
+          if (isStale()) return; // a newer request (or customer switch) has superseded this one
+
           switch (event.type) {
             case "context":
               if (event.order) setCurrentOrder(event.order);
@@ -131,25 +153,31 @@ export default function App() {
         }
       );
 
-      reasoningBaseRef.current = [...reasoningBase, ...latestTurnEntries];
-
-      // Refresh immediately so the Decision Panel's policy citation shows up
-      // without waiting for the next 2s poll tick.
-      refreshAdminLogs();
+      if (!isStale()) {
+        reasoningBaseRef.current = [...reasoningBase, ...latestTurnEntries];
+        // Refresh immediately so the Decision Panel's policy citation shows up
+        // without waiting for the next 2s poll tick.
+        refreshAdminLogs();
+      }
     } catch (err) {
       console.error("Chat request failed:", err);
-      setStreamingMessageId(null);
-      setChatMessages((prev) => [
-        ...prev,
-        {
-          id: `e-${Date.now()}`,
-          role: "error",
-          text: "Signal lost — the agent console couldn't reach the backend. Is it running on :5000?",
-          timestamp: new Date().toISOString(),
-        },
-      ]);
+      if (!isStale()) {
+        setStreamingMessageId(null);
+        setChatMessages((prev) => [
+          ...prev,
+          {
+            id: `e-${Date.now()}`,
+            role: "error",
+            text: "Signal lost — the agent console couldn't reach the backend. Is it running on :5000?",
+            timestamp: new Date().toISOString(),
+          },
+        ]);
+      }
     } finally {
-      setIsTyping(false);
+      if (!isStale()) {
+        setIsTyping(false);
+        setIsSending(false);
+      }
     }
   };
 
@@ -211,6 +239,7 @@ export default function App() {
             onSend={handleSend}
             isTyping={isTyping}
             disabled={!selectedCustomer}
+            isSending={isSending}
             streamingMessageId={streamingMessageId}
           />
         </div>
