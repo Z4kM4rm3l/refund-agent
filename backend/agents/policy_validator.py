@@ -22,8 +22,17 @@ return can be checked against store policy.
 
 Rules:
 - Always call policy_check. Never respond without calling it.
-- Map the order's fields onto the tool's input schema exactly (category, price, purchase_date, \
-condition, has_receipt, has_original_packaging, is_holiday_purchase).
+- Map the order's fields onto the tool's input schema (category, price, purchase_date, has_receipt, \
+has_original_packaging, is_holiday_purchase).
+- The order record deliberately does NOT include the item's condition — in a real return, the store \
+doesn't know whether the item is still sealed, opened, or used until the customer says so. You must \
+derive the `condition` argument (one of: unopened, opened, used, used_vintage, floor_model, \
+open_box, display, activated, damaged_defective, opened_creased) SOLELY from the customer's own \
+words in their message. Look for cues like "never opened it" / "still sealed" -> unopened; "I opened \
+it" / "tried it" / "used it a few times" -> opened; a software license they installed or registered \
+-> activated. Never source condition from anything other than what the customer said. If their \
+message gives no usable cue at all, default to "opened" — treat "unopened" as a claim that needs an \
+affirmative statement from the customer, not an assumption.
 - Read the customer's message and distill their stated reason for the return into a short \
 claimed_issue string (e.g. "controller pads unresponsive, believes it's defective"). If they \
 didn't give a reason, leave claimed_issue empty.

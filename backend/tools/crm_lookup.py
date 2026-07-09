@@ -41,6 +41,15 @@ def _row_to_customer(row) -> dict:
 
 
 def _row_to_order(row) -> dict:
+    # Deliberately excludes `condition` — in a real refund conversation the
+    # store doesn't know whether the item is still sealed, opened, or used
+    # until the customer says so. The seed DB's condition column exists to
+    # script demo scenarios deterministically, but the agent must never see
+    # it directly; policy_validator instead infers condition from what the
+    # customer states in the conversation. `category`, `id`, and
+    # `is_holiday_purchase` are kept — they're required by policy_check for
+    # correct eligibility evaluation and aren't the kind of "did you open
+    # the box" detail this fix is about.
     order = {
         "id": row["id"],
         "order_number": row["order_number"],
@@ -48,7 +57,6 @@ def _row_to_order(row) -> dict:
         "category": row["category"],
         "price": row["price"],
         "purchase_date": row["purchase_date"],
-        "condition": row["condition"],
         "has_receipt": bool(row["has_receipt"]),
         "has_original_packaging": bool(row["has_original_packaging"]),
         "is_holiday_purchase": bool(row["is_holiday_purchase"]),
