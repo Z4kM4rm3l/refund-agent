@@ -143,6 +143,7 @@ class Orchestrator:
             state["claimed_issue"] = None
             state["last_validation"] = None
             state["last_decision"] = None
+            state["reason_provided"] = False
             had_prior_context = False
             had_prior_decision = False
 
@@ -221,6 +222,7 @@ class Orchestrator:
         # -- From here on, both customer and order are known. ------------------
         state["customer"] = customer
         state["order"] = order
+        state["order_identified"] = True
 
         # -- Explicit manager request short-circuits reason-gathering. ---------
         if wants_manager:
@@ -236,8 +238,21 @@ class Orchestrator:
 
         known_issue = (state.get("claimed_issue") or "").strip() or message_claimed_issue
 
+        # A customer can name the order AND explain why in the very same message —
+        # don't let classify_message's short-phrase extraction coming back empty
+        # (it can miss on a long or unusually-worded message) force a redundant
+        # "why?" turn when the message plainly already said more than just the
+        # order number. Strip the order-number token itself and treat any
+        # meaningful remainder as the reason, mirroring the fallback already
+        # used below for returning customers.
+        if not known_issue and order is not None:
+            remainder = ORDER_NUMBER_PATTERN.sub("", message).strip(" ,.-\n\t")
+            if len(remainder) >= 10:
+                known_issue = remainder
+
         # -- Order just identified this turn, reason still unknown: confirm + ask. --
         if not known_issue and not had_prior_context:
+            state["reason_provided"] = False
             logger.log("Orchestrator", "routing_decision", "Order identified — confirming details and asking for the reason for return.")
             yield {"type": "reasoning", "entries": list(logger.trace)}
             reply_text = ""
@@ -257,7 +272,13 @@ class Orchestrator:
 
         # -- Have both order + reason: resolve. --------------------------------
         state["claimed_issue"] = known_issue
-        logger.log("Orchestrator", "routing_decision", "Order and reason both known — routing to Policy Validator, then Refund Resolver.")
+        state["reason_provided"] = True
+        logger.log("Orchestrator", "routing_decision", {
+            "order_identified": state.get("order_identified", False),
+            "reason_provided": state["reason_provided"],
+            "claimed_issue": known_issue,
+            "note": "Order and reason both known — routing to Policy Validator, then Refund Resolver.",
+        })
         augmented_message = message if known_issue.strip() == message.strip() else f"{message}\n\nReason for return: {known_issue}"
         validation = policy_validator.validate(order, augmented_message, conversation_id, logger)
         state["last_validation"] = validation["validation"]
@@ -331,7 +352,7 @@ class Orchestrator:
             return None, None
 
         customer = result["customer"]
-        order = self._select_order(result["orders"], target_order_number)
+        order = self._select_order(result["orders"], target_order_number, message)
         return customer, order
 
     @staticmethod
@@ -340,20 +361,52 @@ class Orchestrator:
         return match.group(0).upper() if match else None
 
     @staticmethod
-    def _select_order(orders: list, target_order_number: str | None):
+    def _select_order(orders: list, target_order_number: str | None, message: str = ""):
         """Only resolve a specific order when the customer actually named one.
 
         Knowing the customer (e.g. from a pre-selected demo profile) is not
         the same as knowing which order they mean — even a customer with a
-        single order should still be asked, so the conversation follows the
-        natural "which order, then why" flow rather than silently guessing.
+        single order should still be asked when they've given zero
+        identifying detail, so the conversation follows the natural "which
+        order, then why" flow rather than silently guessing.
+
+        But a customer who names the item itself ("my Yamaha keyboard
+        showed up broken") HAS identified the order just as much as one who
+        quotes the MMX-##### number — forcing a redundant "which order do
+        you mean?" turn in that case would stall a conversation that
+        already had everything it needed. Falls back to matching the
+        product name's distinctive words against the message, only
+        resolving when exactly one of the customer's orders is a match —
+        an ambiguous or zero match still means "ask", never a guess.
         """
-        if not orders or not target_order_number:
+        if not orders:
             return None
+
+        if target_order_number:
+            for o in orders:
+                if o["order_number"].upper() == target_order_number.upper():
+                    return o
+            return None
+
+        if not message:
+            return None
+
+        message_words = set(re.findall(r"[a-z]{3,}", message.lower()))
+        if not message_words:
+            return None
+
+        scored = []
         for o in orders:
-            if o["order_number"].upper() == target_order_number.upper():
-                return o
-        return None
+            product_words = set(re.findall(r"[a-z]{3,}", o["product_name"].lower()))
+            overlap = len(product_words & message_words)
+            if overlap > 0:
+                scored.append((overlap, o))
+
+        if not scored:
+            return None
+        best_score = max(s for s, _ in scored)
+        best_matches = [o for s, o in scored if s == best_score]
+        return best_matches[0] if len(best_matches) == 1 else None
 
     # -- classification -------------------------------------------------------
 
