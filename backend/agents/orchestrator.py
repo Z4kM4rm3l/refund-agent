@@ -55,7 +55,7 @@ CLASSIFY_SCHEMA = {
                 "enum": ["refund_request", "general_question", "other"],
                 "description": "refund_request if they want to return/refund/exchange an item or are describing a problem with a purchase.",
             },
-            "claimed_issue": {"type": "string", "description": "Customer's stated reason for the return/complaint, short phrase. Empty string if none."},
+            "claimed_issue": {"type": "string", "description": "Customer's explicitly stated reason for the return/complaint (why they want to return it and/or the item's condition), short phrase. Merely naming an order number or product ('I got the Stratocaster, it's MMX-10001') is identification, NOT a reason — return an empty string unless the customer actually says what's wrong or why they're returning it."},
             "wants_manager": {"type": "boolean", "description": "True only if they explicitly ask to speak with a manager/supervisor/human escalation."},
             "is_pushback": {"type": "boolean", "description": "True only if prior_decision_this_conversation is not null AND the customer is objecting to or disputing that prior decision."},
         },
@@ -236,19 +236,13 @@ class Orchestrator:
             state["history"].append({"role": "agent", "text": reply_text})
             return
 
+        # The reason must come from the customer explicitly saying WHY they
+        # want to return the item (via the classifier's claimed_issue, or a
+        # later turn answering the "why?" question below). Naming the order —
+        # by number or by product name — is identification only; treating any
+        # leftover text around an identifier as a "reason" makes the pipeline
+        # hallucinate a condition the customer never stated.
         known_issue = (state.get("claimed_issue") or "").strip() or message_claimed_issue
-
-        # A customer can name the order AND explain why in the very same message —
-        # don't let classify_message's short-phrase extraction coming back empty
-        # (it can miss on a long or unusually-worded message) force a redundant
-        # "why?" turn when the message plainly already said more than just the
-        # order number. Strip the order-number token itself and treat any
-        # meaningful remainder as the reason, mirroring the fallback already
-        # used below for returning customers.
-        if not known_issue and order is not None:
-            remainder = ORDER_NUMBER_PATTERN.sub("", message).strip(" ,.-\n\t")
-            if len(remainder) >= 10:
-                known_issue = remainder
 
         # -- Order just identified this turn, reason still unknown: confirm + ask. --
         if not known_issue and not had_prior_context:
