@@ -19,20 +19,48 @@ _MODEL_ID = "eleven_turbo_v2_5"
 _ORDER_NUMBER_PATTERN = re.compile(r"\bMMX-(\d+)\b", re.IGNORECASE)
 
 
-def _speakable_order_numbers(text: str) -> str:
-    """Rewrite MMX-##### order numbers into a character-by-character form.
+def _clean_for_speech(text: str) -> str:
+    """Rewrite the reply into clean, speakable prose for ElevenLabs.
 
-    Spoken as-is, ElevenLabs tends to read "MMX-10001" as a word or a large
-    number ("ten thousand and one"), which is useless to a customer trying
-    to jot it down. "M-M-X, 1 0 0 0 1" makes it pronounce each letter and
-    digit individually, the way a support agent would read it out.
+    The chat UI keeps the original markdown-formatted text — this only
+    shapes the copy handed to TTS, where markdown markers, placeholder
+    patterns, and symbols otherwise come out as garbled audio ("asterisk
+    asterisk", "hash hash hash", "ten thousand and one"...).
     """
+    # Markdown: headers, bold/italic markers, inline code backticks.
+    text = re.sub(r"^\s{0,3}#{1,6}\s+", "", text, flags=re.MULTILINE)
+    text = re.sub(r"\*{1,3}([^*]+)\*{1,3}", r"\1", text)
+    text = re.sub(r"_{1,3}([^_]+)_{1,3}", r"\1", text)
+    text = text.replace("`", "")
 
-    def _spell_out(match: re.Match) -> str:
-        digits = " ".join(match.group(1))
-        return f"M-M-X, {digits}"
+    # Placeholder order-number examples: "MMX-#####" -> "M-M-X, five digits".
+    text = re.sub(r"\bMMX-#{4,}", "M-M-X, five digits", text, flags=re.IGNORECASE)
+    text = re.sub(r"#{4,}", "five digits", text)
 
-    return _ORDER_NUMBER_PATTERN.sub(_spell_out, text)
+    # Real order numbers: spell out letter by letter, digit by digit —
+    # "MMX-10001" -> "M-M-X, 1 0 0 0 1" — the way an agent would read it out.
+    text = _ORDER_NUMBER_PATTERN.sub(lambda m: f"M-M-X, {' '.join(m.group(1))}", text)
+
+    # Dollar amounts: "$479.99" -> "479 dollars and 99 cents", "$500" -> "500 dollars".
+    text = re.sub(r"\$(\d[\d,]*)\.(\d{2})\b", r"\1 dollars and \2 cents", text)
+    text = re.sub(r"\$(\d[\d,]*)\b", r"\1 dollars", text)
+
+    # Numeric ranges: "5-7 business days" -> "5 to 7 business days".
+    text = re.sub(r"\b(\d+)\s*-\s*(\d+)\b", r"\1 to \2", text)
+
+    # Bullet/list dashes at line starts become a sentence pause, so list items
+    # don't run together once newlines are collapsed below.
+    text = re.sub(r"(?:^|\n)\s*[-*•]\s+", ". ", text)
+
+    # Drop anything that isn't a letter, digit, standard punctuation, or space.
+    text = re.sub(r"[^A-Za-z0-9 \n.,!?;:'\"()\-]", " ", text)
+
+    # Collapse runs of whitespace/newlines into single spaces, tidy up any
+    # doubled sentence punctuation the substitutions above may have created.
+    text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"[:;,]\s*\.", ".", text)
+    text = re.sub(r"(?:\.\s*)+\.", ".", text)
+    return text.strip()
 
 
 def _get_client():
@@ -61,7 +89,7 @@ def synthesize(text: str, voice_id: str | None = None):
 
     return client.text_to_speech.convert(
         voice_id=voice_id or config.ELEVENLABS_VOICE_ID,
-        text=_speakable_order_numbers(text),
+        text=_clean_for_speech(text),
         model_id=_MODEL_ID,
         output_format="mp3_44100_128",
     )
