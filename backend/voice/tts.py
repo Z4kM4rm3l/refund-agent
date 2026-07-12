@@ -8,6 +8,7 @@ here touches agent logic.
 
 import re
 
+from dotenv import dotenv_values
 from elevenlabs.client import ElevenLabs
 
 from backend import config
@@ -15,6 +16,16 @@ from backend import config
 # Turbo model: low latency, well suited to a live customer-support reply
 # that's about to be played back immediately rather than downloaded.
 _MODEL_ID = "eleven_turbo_v2_5"
+
+
+def _fresh_env(key: str, fallback: str) -> str:
+    # config.py snapshots .env once, when the Flask process first imports it —
+    # so an edit to .env (new voice ID, new key) is invisible to the running
+    # server even though a fresh `python -c "import backend.config"` shows the
+    # new value. Re-reading .env per call keeps voice settings hot-swappable
+    # without a server restart; the config snapshot remains the fallback for
+    # values set via real environment variables rather than the .env file.
+    return dotenv_values(config.PROJECT_ROOT / ".env").get(key) or fallback
 
 _ORDER_NUMBER_PATTERN = re.compile(r"\bMMX-(\d+)\b", re.IGNORECASE)
 
@@ -64,14 +75,12 @@ def _clean_for_speech(text: str) -> str:
 
 
 def _get_client():
-    # Built lazily, on first use, rather than at module-import time — the
-    # Flask process imports this module once at startup, so a client built
-    # at import time would permanently bake in whatever ELEVENLABS_API_KEY
-    # happened to be set (or blank) at that instant, even if .env is edited
-    # afterward.
-    if not config.ELEVENLABS_API_KEY:
+    # Built lazily, per call, with a freshly-read key — never baked in at
+    # module import (see _fresh_env for why).
+    api_key = _fresh_env("ELEVENLABS_API_KEY", config.ELEVENLABS_API_KEY)
+    if not api_key:
         return None
-    return ElevenLabs(api_key=config.ELEVENLABS_API_KEY)
+    return ElevenLabs(api_key=api_key)
 
 
 def synthesize(text: str, voice_id: str | None = None):
@@ -88,7 +97,7 @@ def synthesize(text: str, voice_id: str | None = None):
         raise RuntimeError("ELEVENLABS_API_KEY is not configured on the server.")
 
     return client.text_to_speech.convert(
-        voice_id=voice_id or config.ELEVENLABS_VOICE_ID,
+        voice_id=voice_id or _fresh_env("ELEVENLABS_VOICE_ID", config.ELEVENLABS_VOICE_ID),
         text=_clean_for_speech(text),
         model_id=_MODEL_ID,
         output_format="mp3_44100_128",
