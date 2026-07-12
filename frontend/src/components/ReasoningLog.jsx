@@ -22,10 +22,25 @@ function formatTimestamp(ts) {
 // One "channel strip" — a vertical lane for a single agent's reasoning trace.
 export default function ReasoningLog({ laneKey, agentLabel, entries }) {
   const bodyRef = useRef(null);
+  // Whether the user is "pinned" to the bottom of the lane. Starts true so a
+  // fresh lane follows new entries; flips false the moment the user scrolls
+  // up to read older entries, so the 2s /admin/logs polling can't yank their
+  // scroll position away. Scrolling back to (near) the bottom re-pins.
+  const pinnedToBottomRef = useRef(true);
+
+  const handleScroll = () => {
+    const el = bodyRef.current;
+    if (!el) return;
+    pinnedToBottomRef.current = el.scrollTop + el.clientHeight >= el.scrollHeight - 10;
+  };
 
   useEffect(() => {
     const el = bodyRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    // behavior: "instant" overrides the lane's `scroll-behavior: smooth` CSS —
+    // a plain scrollTop assignment would start a smooth animation instead,
+    // which lags behind rapid streaming updates and can report a mid-flight
+    // position to handleScroll, spuriously unpinning the lane.
+    if (el && pinnedToBottomRef.current) el.scrollTo({ top: el.scrollHeight, behavior: "instant" });
   }, [entries]);
 
   return (
@@ -34,7 +49,7 @@ export default function ReasoningLog({ laneKey, agentLabel, entries }) {
         <span className="channel-strip__name">{agentLabel}</span>
         <span className="channel-strip__count">{entries.length}</span>
       </div>
-      <div className="channel-strip__body" ref={bodyRef}>
+      <div className="channel-strip__body" ref={bodyRef} onScroll={handleScroll}>
         {entries.length === 0 && <div className="channel-strip__empty">Awaiting signal…</div>}
         {entries.map((entry, idx) => (
           <div className="log-entry" key={`${entry.timestamp}-${idx}`}>

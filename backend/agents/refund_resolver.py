@@ -67,6 +67,11 @@ been made (given to you in the `decision` field below). Output ONLY the message 
 headers, no meta-commentary, no "Here is the reply:" preamble. Write it as plain prose ready to send \
 directly to the customer right now (light markdown like **bold** for amounts/product names is fine).
 
+Greeting: check is_first_agent_message in the context. Only if it is true may you open with a \
+greeting like "Hi Jenna,". If it is false, the customer has already been greeted earlier in this \
+conversation — do NOT greet them again. Start directly with the substance: the decision, the \
+reason, or the next steps. No "Hi [name]," no "Thanks for reaching out," no re-introduction.
+
 Tone by decision status:
 
 APPROVED — Say what they get (full refund / store credit / exchange) and the expected timeline \
@@ -111,6 +116,7 @@ def resolve_stream(
     is_pushback: bool,
     prior_decision: dict | None,
     logger: ReasoningLogger,
+    is_first_agent_message: bool = False,
 ):
     """Generator yielding streaming events while deciding and replying.
 
@@ -127,6 +133,7 @@ def resolve_stream(
         "wants_manager": wants_manager,
         "is_pushback": is_pushback,
         "prior_decision": prior_decision,
+        "is_first_agent_message": is_first_agent_message,
     }
 
     logger.log("Refund Resolver", "received_validation", {

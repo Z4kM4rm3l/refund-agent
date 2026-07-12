@@ -284,9 +284,14 @@ class Orchestrator:
 
     def _stream_resolver_and_capture_reply(self, conversation_id, customer, order, message, validation, wants_manager, is_pushback, prior_decision, logger, state):
         """Relay refund_resolver.resolve_stream's events and return the full reply text."""
+        # The customer should only be greeted once per conversation — if any
+        # agent message already exists in the history, the resolver must skip
+        # the "Hi [name]," opener and go straight to the substance.
+        is_first_agent_message = not any(m.get("role") == "agent" for m in state.get("history", []))
         reply_text = ""
         for event in refund_resolver.resolve_stream(
             conversation_id, customer, order, message, validation, wants_manager, is_pushback, prior_decision, logger,
+            is_first_agent_message=is_first_agent_message,
         ):
             if event["type"] == "reply_delta":
                 reply_text += event["text"]
