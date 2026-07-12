@@ -49,6 +49,57 @@
   --radius-lg: 12px;
   --shadow-panel: 0 4px 24px rgba(0, 0, 0, 0.45);
   --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+
+  /* Theme-dependent composites */
+  --bg-topbar: linear-gradient(180deg, #131519, #0d0d0d);
+  --bg-grid-line: rgba(245, 158, 11, 0.035);
+  --bg-glow: rgba(255, 255, 255, 0.04);
+  --bg-panel-sheen: rgba(255, 255, 255, 0.012);
+}
+
+/* Light mode — clean console, same amber stage lighting, deeper cyan. */
+:root[data-theme="light"] {
+  /* Surfaces */
+  --bg-primary: #f8f9fa;
+  --bg-panel: #ffffff;
+  --bg-panel-raised: #f3f4f6;
+  --bg-strip: #f9fafb;
+  --bg-input: #ffffff;
+  --bg-bubble-agent: #ffffff;
+
+  /* Accents (amber unchanged; cyan deepened for contrast on white) */
+  --accent-cyan: #0891b2;
+  --accent-cyan-bright: #0e7490;
+  --accent-cyan-dim: #67e8f9;
+  --accent-amber-dim: #fcd34d;
+
+  /* Text */
+  --text-primary: #111827;
+  --text-secondary: #4b5563;
+  --text-muted: #6b7280;
+
+  /* Borders */
+  --border: #e5e7eb;
+  --border-light: #d1d5db;
+  --border-amber: rgba(245, 158, 11, 0.5);
+  --border-cyan: rgba(8, 145, 178, 0.45);
+
+  /* Status (slightly deepened for white backgrounds) */
+  --status-approved: #059669;
+  --status-denied: #dc2626;
+  --status-escalated: #d97706;
+  --status-split: #0891b2;
+  --status-info: #6b7280;
+
+  /* Misc */
+  --shadow-panel: 0 4px 24px rgba(17, 24, 39, 0.08);
+  --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.6);
+
+  /* Theme-dependent composites */
+  --bg-topbar: linear-gradient(180deg, #ffffff, #f3f4f6);
+  --bg-grid-line: rgba(245, 158, 11, 0.05);
+  --bg-glow: rgba(245, 158, 11, 0.03);
+  --bg-panel-sheen: rgba(17, 24, 39, 0.012);
 }
 
 * {
@@ -66,9 +117,9 @@ body {
   font-family: var(--font-sans);
   color: var(--text-primary);
   background-color: var(--bg-primary);
-  background-image: linear-gradient(rgba(245, 158, 11, 0.035) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(245, 158, 11, 0.035) 1px, transparent 1px),
-    radial-gradient(ellipse at 50% 0%, rgba(255, 255, 255, 0.04), transparent 60%);
+  background-image: linear-gradient(var(--bg-grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--bg-grid-line) 1px, transparent 1px),
+    radial-gradient(ellipse at 50% 0%, var(--bg-glow), transparent 60%);
   background-size: 100% 26px, 26px 100%, 100% 100%;
   background-attachment: fixed;
   -webkit-font-smoothing: antialiased;
@@ -123,9 +174,34 @@ button {
   align-items: center;
   gap: 10px;
   padding: 0 18px;
-  background: linear-gradient(180deg, #131519, #0d0d0d);
+  background: var(--bg-topbar);
   border-bottom: 1px solid var(--border);
   z-index: 50;
+}
+
+/* Sun/moon theme toggle, far right of the topbar */
+.btn-theme {
+  margin-left: auto;
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border-light);
+  background: var(--bg-panel-raised);
+  color: var(--accent-amber);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.btn-theme svg {
+  width: 15px;
+  height: 15px;
+}
+.btn-theme:hover {
+  border-color: var(--border-amber);
+  filter: brightness(1.15);
 }
 
 .app-topbar__logo {
@@ -154,7 +230,7 @@ button {
   flex-direction: column;
   border-right: 1px solid var(--border);
   padding-top: 44px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.012), transparent 200px);
+  background: linear-gradient(180deg, var(--bg-panel-sheen), transparent 200px);
 }
 
 .panel-right {
@@ -918,7 +994,7 @@ button {
 }
 
 .session-log tbody tr:nth-child(odd) {
-  background: rgba(255, 255, 255, 0.012);
+  background: var(--bg-panel-sheen);
 }
 .session-log tbody tr:hover {
   background: rgba(245, 158, 11, 0.045);
@@ -940,4 +1016,167 @@ button {
 .track-number {
   font-family: var(--font-mono);
   color: var(--text-muted);
+}
+
+/* =========================================================================
+   Voice pipeline — chat header/speaker toggle, mic button, status indicators
+   ========================================================================= */
+
+.chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.chat-header__label {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+}
+
+/* Speaker / mute toggle */
+.btn-speaker {
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border-light);
+  background: var(--bg-panel-raised);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.btn-speaker svg {
+  width: 15px;
+  height: 15px;
+}
+.btn-speaker--on {
+  color: var(--accent-cyan);
+  border-color: var(--border-cyan);
+  box-shadow: 0 0 6px 0 rgba(6, 182, 212, 0.25);
+}
+.btn-speaker--on:hover {
+  filter: brightness(1.15);
+}
+.btn-speaker--off {
+  color: var(--text-muted);
+}
+.btn-speaker--off:hover {
+  color: var(--text-secondary);
+}
+
+/* Mic button — circular, dark with amber/cyan accent, matches .btn-pick's
+   tactile pedal feel but sits in its own resting state (idle = cyan-lined
+   "ready" look) since it's a toggleable capture control, not a one-shot
+   submit action. */
+.btn-mic {
+  --mic-size: 42px;
+  width: var(--mic-size);
+  height: var(--mic-size);
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border-cyan);
+  background: linear-gradient(160deg, var(--bg-panel-raised), var(--bg-strip));
+  color: var(--accent-cyan);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.4), inset 0 0 0 1px rgba(6, 182, 212, 0.08);
+  transition: border-color 0.15s ease, filter 0.15s ease, transform 0.08s ease;
+}
+.btn-mic svg {
+  width: 18px;
+  height: 18px;
+}
+.btn-mic:hover:not(:disabled) {
+  filter: brightness(1.2);
+  border-color: var(--accent-cyan-bright);
+}
+.btn-mic:active:not(:disabled) {
+  transform: scale(0.94);
+}
+.btn-mic:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn-mic--recording {
+  color: #fff;
+  border-color: var(--status-denied);
+  background: linear-gradient(160deg, #ef4444, #b91c1c);
+  animation: mic-pulse 1.1s ease-in-out infinite;
+}
+@keyframes mic-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.55), 0 3px 8px rgba(0, 0, 0, 0.4); }
+  50% { box-shadow: 0 0 0 8px rgba(239, 68, 68, 0), 0 3px 8px rgba(0, 0, 0, 0.4); }
+}
+
+.btn-mic--transcribing {
+  color: var(--accent-amber);
+  border-color: var(--accent-amber);
+  animation: mic-think 1.2s ease-in-out infinite;
+}
+@keyframes mic-think {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+/* Recording / transcribing / error status pills, shown above the input row */
+.voice-status-row {
+  padding: 0 16px 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.voice-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border-light);
+  background: var(--bg-panel-raised);
+}
+.voice-status--recording {
+  color: var(--status-denied);
+  border-color: rgba(239, 68, 68, 0.4);
+}
+.voice-status__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--status-denied);
+  color: var(--status-denied);
+  box-shadow: 0 0 6px 1px currentColor;
+  animation: pulse-led 1s ease-in-out infinite;
+}
+.voice-status--transcribing {
+  color: var(--accent-amber);
+  border-color: var(--border-amber);
+}
+.voice-status__spinner {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(245, 158, 11, 0.25);
+  border-top-color: var(--accent-amber);
+  animation: voice-spin 0.7s linear infinite;
+}
+@keyframes voice-spin {
+  to { transform: rotate(360deg); }
+}
+.voice-status--error {
+  color: #fca5a5;
+  border-color: rgba(239, 68, 68, 0.35);
+  background: rgba(239, 68, 68, 0.06);
 }

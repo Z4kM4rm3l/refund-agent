@@ -5,6 +5,36 @@ import AdminDashboard from "./components/AdminDashboard.jsx";
 import { fetchAdminLogs, fetchCustomers, streamChatMessage } from "./api.js";
 
 const ADMIN_POLL_INTERVAL_MS = 2000;
+const THEME_STORAGE_KEY = "melodymax-theme";
+
+function SunIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="12" cy="12" r="4.5" fill="currentColor" />
+      {[0, 45, 90, 135, 180, 225, 270, 315].map((deg) => (
+        <line
+          key={deg}
+          x1="12"
+          y1="2.5"
+          x2="12"
+          y2="5.5"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          transform={`rotate(${deg} 12 12)`}
+        />
+      ))}
+    </svg>
+  );
+}
+
+function MoonIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" fill="currentColor" />
+    </svg>
+  );
+}
 
 function newConversationId() {
   if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
@@ -12,6 +42,23 @@ function newConversationId() {
 }
 
 export default function App() {
+  const [theme, setTheme] = useState(() => {
+    try {
+      return localStorage.getItem(THEME_STORAGE_KEY) === "light" ? "light" : "dark";
+    } catch {
+      return "dark";
+    }
+  });
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, theme);
+    } catch {
+      // localStorage unavailable (private mode etc.) — theme still applies for this session
+    }
+  }, [theme]);
+
   const [customers, setCustomers] = useState([]);
   const [selectedCustomer, setSelectedCustomer] = useState(null);
   const [conversationId, setConversationId] = useState(newConversationId());
@@ -225,6 +272,15 @@ export default function App() {
           MELODYMAX<span>GEAR</span>
         </span>
         <span className="app-topbar__sub">// Refund Agent Console</span>
+        <button
+          type="button"
+          className="btn-theme"
+          onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
+          aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+          title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+        >
+          {theme === "dark" ? <SunIcon /> : <MoonIcon />}
+        </button>
       </div>
 
       <div className="app-shell">
