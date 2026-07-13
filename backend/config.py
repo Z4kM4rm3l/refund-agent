@@ -37,3 +37,13 @@ MANAGER_APPROVAL_THRESHOLD = float(os.environ.get("MANAGER_APPROVAL_THRESHOLD", 
 NO_RECEIPT_HIGH_VALUE_THRESHOLD = float(os.environ.get("NO_RECEIPT_HIGH_VALUE_THRESHOLD", "150"))
 
 CORS_ORIGINS = os.environ.get("CORS_ORIGINS", "*")
+
+# Voice pipeline — purely additive input/output layer around the existing
+# text /chat endpoint. Whisper transcribes speech to text before /chat ever
+# sees it; ElevenLabs speaks the already-complete reply text after /chat has
+# finished. Neither key is required for the app to run — voice endpoints
+# fail gracefully (the frontend falls back to text-only) if unset.
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY", "")
+# Rachel — a calm, professional voice well suited to customer support.
+ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")

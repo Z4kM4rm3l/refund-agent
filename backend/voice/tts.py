@@ -27,7 +27,45 @@ def _fresh_env(key: str, fallback: str) -> str:
     # values set via real environment variables rather than the .env file.
     return dotenv_values(config.PROJECT_ROOT / ".env").get(key) or fallback
 
-_ORDER_NUMBER_PATTERN = re.compile(r"\bMMX-(\d+)\b", re.IGNORECASE)
+# FIX: Added a '?' after the hyphen so it smoothly catches "MMX10007" in addition to "MMX-10007"
+_ORDER_NUMBER_PATTERN = re.compile(r"\bMMX-?([0-9\-\s]+)\b", re.IGNORECASE)
+
+# Pattern to capture standard hyphens (-), en-dashes (–), and em-dashes (—) between numeric ranges
+_RANGE_PATTERN = re.compile(r"\b(\d+)\s*[\-\–\—]\s*(\d+)\b")
+
+_ONES = [
+    "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
+    "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen",
+    "seventeen", "eighteen", "nineteen",
+]
+_TENS = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"]
+
+
+def _int_to_words(n: int) -> str:
+    """Spell out 0-9999 in words ("nine hundred ninety nine"). Lookup-based,
+    no libraries — amounts at or above 10,000 stay as digits (see caller)."""
+    if n < 20:
+        return _ONES[n]
+    if n < 100:
+        tens, ones = divmod(n, 10)
+        return _TENS[tens] + (f" {_ONES[ones]}" if ones else "")
+    if n < 1000:
+        hundreds, rest = divmod(n, 100)
+        return f"{_ONES[hundreds]} hundred" + (f" {_int_to_words(rest)}" if rest else "")
+    thousands, rest = divmod(n, 1000)
+    return f"{_ONES[thousands]} thousand" + (f" {_int_to_words(rest)}" if rest else "")
+
+
+def _dollars_to_words(match: re.Match) -> str:
+    whole = int(match.group(1).replace(",", ""))
+    cents = int(match.group(2)) if match.group(2) else 0
+    if whole >= 10_000:
+        spoken = f"{whole} dollars"  # digits are fine at this size; words get unwieldy
+    else:
+        spoken = f"{_int_to_words(whole)} dollars"
+    if cents:
+        spoken += f" and {_int_to_words(cents)} cents"
+    return spoken
 
 
 def _clean_for_speech(text: str) -> str:
@@ -48,16 +86,22 @@ def _clean_for_speech(text: str) -> str:
     text = re.sub(r"\bMMX-#{4,}", "M-M-X, five digits", text, flags=re.IGNORECASE)
     text = re.sub(r"#{4,}", "five digits", text)
 
-    # Real order numbers: spell out letter by letter, digit by digit —
-    # "MMX-10001" -> "M-M-X, 1 0 0 0 1" — the way an agent would read it out.
-    text = _ORDER_NUMBER_PATTERN.sub(lambda m: f"M-M-X, {' '.join(m.group(1))}", text)
+    # Real order numbers: strip internal spaces/hyphens, then map digits to explicit 
+    # words so the voice engine reads them sequentially and smoothly.
+    digit_map = {"0": "zero", "1": "one", "2": "two", "3": "three", "4": "four", "5": "five", "6": "six", "7": "seven", "8": "eight", "9": "nine"}
+    
+    def _normalize_order_num(m):
+        clean_digits = re.sub(r"[\-\s]", "", m.group(1))
+        return f"M-M-X, {' '.join(digit_map[d] for d in clean_digits)}"
 
-    # Dollar amounts: "$479.99" -> "479 dollars and 99 cents", "$500" -> "500 dollars".
-    text = re.sub(r"\$(\d[\d,]*)\.(\d{2})\b", r"\1 dollars and \2 cents", text)
-    text = re.sub(r"\$(\d[\d,]*)\b", r"\1 dollars", text)
+    text = _ORDER_NUMBER_PATTERN.sub(_normalize_order_num, text)
+
+    # Dollar amounts in words: "$999.99" -> "nine hundred ninety nine dollars
+    # and ninety nine cents", "$500" -> "five hundred dollars".
+    text = re.sub(r"\$(\d[\d,]*)(?:\.(\d{2}))?\b", _dollars_to_words, text)
 
     # Numeric ranges: "5-7 business days" -> "5 to 7 business days".
-    text = re.sub(r"\b(\d+)\s*-\s*(\d+)\b", r"\1 to \2", text)
+    text = _RANGE_PATTERN.sub(r"\1 to \2", text)
 
     # Bullet/list dashes at line starts become a sentence pause, so list items
     # don't run together once newlines are collapsed below.
@@ -96,9 +140,13 @@ def synthesize(text: str, voice_id: str | None = None):
     if client is None:
         raise RuntimeError("ELEVENLABS_API_KEY is not configured on the server.")
 
+    # FIX: Prepend a small pause block to generate audio headroom, keeping the
+    # browser player from clipping the absolute first word of speech.
+    cleaned_text = "... " + _clean_for_speech(text)
+
     return client.text_to_speech.convert(
         voice_id=voice_id or _fresh_env("ELEVENLABS_VOICE_ID", config.ELEVENLABS_VOICE_ID),
-        text=_clean_for_speech(text),
+        text=cleaned_text,
         model_id=_MODEL_ID,
         output_format="mp3_44100_128",
     )
