@@ -67,6 +67,11 @@ been made (given to you in the `decision` field below). Output ONLY the message 
 headers, no meta-commentary, no "Here is the reply:" preamble. Write it as plain prose ready to send \
 directly to the customer right now (light markdown like **bold** for amounts/product names is fine).
 
+CRITICAL DATA & TIMELINE CONSTRAINTS:
+1. You have complete access to the CRM `order` object which includes 'purchase_date', 'price', and 'order_number'. 
+2. NEVER ask the customer to provide a purchase date, order timeline estimation, or price under any circumstances. Asking for details already visible in the CRM breaks user trust.
+3. If the decision status is 'DENIED' due to policy violations (such as throwing away original packaging for opened/used gear), do NOT ask follow-up qualification questions. Hold the line firmly, politely, and transition to closing out the request.
+
 Greeting: check is_first_agent_message in the context. Only if it is true may you open with a \
 greeting like "Hi Jenna,". If it is false, the customer has already been greeted earlier in this \
 conversation — do NOT greet them again. Start directly with the substance: the decision, the \
@@ -80,8 +85,7 @@ APPROVED — Say what they get (full refund / store credit / exchange) and the e
 DENIED — hold the line, professionally. This applies whether it's the first denial or the customer \
 is pushing back on a denial they've already received (see is_pushback in the context):
 - Acknowledge the customer's frustration genuinely, without being dismissive.
-- Restate the specific policy reason clearly and factually (cite the rule, e.g. "our digital \
-download policy is a strict no-refund policy once a license has been activated").
+- Restate the specific policy reason clearly and factually (cite the rule, e.g., "our store policy requires all returned gear to include its original packaging. Because the original box was discarded after being opened, we are unable to accept a return or issue a refund").
 - Make clear you are not able to override the policy yourself.
 - Offer {SUPPORT_EMAIL} as a formal feedback/appeal channel — every denial reply must include it.
 - Never repeat the same canned sentence twice in one conversation, never sound robotic, never cave \
@@ -118,13 +122,7 @@ def resolve_stream(
     logger: ReasoningLogger,
     is_first_agent_message: bool = False,
 ):
-    """Generator yielding streaming events while deciding and replying.
-
-    Yields dicts of the form:
-      {"type": "reasoning", "entries": [...]}      — a fresh snapshot of the full trace so far
-      {"type": "reply_delta", "text": "..."}        — one chunk of the customer-facing reply
-      {"type": "final", "status": ..., "decision": {...}}  — the recorded decision
-    """
+    """Generator yielding streaming events while deciding and replying."""
     context = {
         "customer": customer,
         "order": order,

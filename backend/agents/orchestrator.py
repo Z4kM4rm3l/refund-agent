@@ -24,6 +24,7 @@ admin dashboard can show the full trace for a turn.
 import json
 import re
 from datetime import date
+from concurrent.futures import ThreadPoolExecutor
 
 import anthropic
 
@@ -32,7 +33,8 @@ from backend.config import CLAUDE_MODEL, FAST_REPLY_MODEL
 from backend.tools import crm_lookup
 from backend.utils.logger import ReasoningLogger
 
-ORDER_NUMBER_PATTERN = re.compile(r"\bMMX-\d+\b", re.IGNORECASE)
+# Made the hyphen optional here as well so the pipeline matches "MMX10007" smoothly
+ORDER_NUMBER_PATTERN = re.compile(r"\bMMX-?\d+\b", re.IGNORECASE)
 
 CRM_SYSTEM_PROMPT = """You are the identification step of the Orchestrator agent for MelodyMax \
 Gear customer support. Your only job is to call the crm_lookup tool to identify which customer and \
@@ -53,7 +55,7 @@ CLASSIFY_SCHEMA = {
             "intent": {
                 "type": "string",
                 "enum": ["refund_request", "general_question", "other"],
-                "description": "refund_request if they want to return/refund/exchange an item or are describing a problem with a purchase.",
+                "description": "refund_request if they want to return/refund/exchange an item, are describing a problem with a purchase, or are responding to an agent's request regarding the item's condition, packaging, or return eligibility state.",
             },
             "claimed_issue": {"type": "string", "description": "Customer's explicitly stated reason for the return/complaint (why they want to return it and/or the item's condition), short phrase. Merely naming an order number or product ('I got the Stratocaster, it's MMX-10001') is identification, NOT a reason — return an empty string unless the customer actually says what's wrong or why they're returning it."},
             "wants_manager": {"type": "boolean", "description": "True only if they explicitly ask to speak with a manager/supervisor/human escalation."},
@@ -70,7 +72,8 @@ Always call it."""
 
 GENERAL_REPLY_SYSTEM_PROMPT = """You are the Orchestrator agent for MelodyMax Gear, a musical \
 instrument and pro audio retailer, answering a general (non-refund) customer message. Be warm, \
-concise, and helpful. If relevant, you may reference the customer's known order. If the question is \
+concise, and helpful. Speak naturally and do NOT overuse or repeat the customer's name if they have \
+already been greeted. If relevant, you may reference the customer's known order. If the question is \
 actually about a return or refund, gently invite them to describe what they'd like to return. Output \
 ONLY the message itself — no JSON, no preamble."""
 
@@ -78,24 +81,22 @@ ASK_FOR_ORDER_SYSTEM_PROMPT = """You are the Orchestrator agent for MelodyMax Ge
 instrument and pro audio retailer, at the very start of a refund conversation. You don't yet know \
 which order this is about. Write a short, warm reply (1-2 sentences) that acknowledges what they \
 said and asks for their order number (format MMX-#####) or the name of the item they purchased, so \
-you can look it up. If you already know the customer's name, you may use it. If wants_manager is \
-true, briefly acknowledge that you'll get a manager involved, but explain you still need the order \
-first so the manager has something to review. Output ONLY the message itself — no JSON, no preamble."""
+you can look it up. Use the customer's name naturally for a first greeting, but do not over-index on it. \
+If wants_manager is true, briefly acknowledge that you'll get a manager involved, but explain you still \
+need the order first so the manager has something to review. Output ONLY the message itself — no JSON, no preamble."""
 
-CONFIRM_ORDER_SYSTEM_PROMPT = """You are the Orchestrator agent for MelodyMax Gear, a musical \
-instrument and pro audio retailer. You just identified which order the customer means. Write a \
-short, warm reply (1-2 sentences) that confirms what you found — the item, and roughly how long ago \
-they purchased it if known (e.g. "I can see your Fender Stratocaster purchased 12 days ago") — and \
-then asks an open-ended question inviting them to explain both why they'd like to return it and what \
-condition it's in, e.g. "What prompted you to request a return, and can you tell me a bit about the \
-item's condition — still sealed, opened, used?"
+CONFIRM_ORDER_SYSTEM_PROMPT = """You are the Orchestrator agent for MelodyMax Gear. \
+You have successfully found the customer's order details in our CRM. Look directly at the 'order' context object provided to you.
 
-You do NOT know the item's condition — the order record you were given does not include it, because \
-in a real return the store has no way to know whether it's still sealed, opened, or used until the \
-customer tells you. Never state, confirm, imply, or ask a leading yes/no question about a condition \
-(e.g. "since it's unopened..." or "it's still in the box, right?") — you have no basis for it. Ask \
-open-endedly and let the customer describe it in their own words. Do not guess at eligibility or \
-policy yet; that comes later. Output ONLY the message itself — no JSON, no preamble."""
+Your task is to write a warm, human-like confirmation response (1-2 sentences) explicitly stating the exact item name found in their order record (e.g., "I see your Fender Mustang LT25 Amplifier").
+
+CRITICAL PIPELINE CONSTRAINTS:
+1. Speak naturally like a human peer. Do NOT include or repeat the customer's name in this message since they have already been greeted earlier in the conversation.
+2. If the 'order' object contains only a single item, you already know EXACTLY what they want to return. Do NOT ask them what item they want to return, do NOT ask them to confirm what is in the order, and do NOT ask if they want to return a specific item or the entire order. 
+3. Completely ignore any stray or unrelated words from previous turns (like "hat"). Trust ONLY the 'order' payload data from the CRM.
+4. Conclude your message by asking a single, clean, open-ended question inviting them to describe why they want to request a return and what condition the item is currently in (e.g., "What prompted the return, and is the amplifier still unopened or has it been used?").
+
+Output ONLY the text of the message itself — no JSON, no preamble."""
 
 
 class Orchestrator:
@@ -111,19 +112,7 @@ class Orchestrator:
         email: str | None = None,
         order_number: str | None = None,
     ):
-        """Generator driving one conversation turn, yielding streaming events.
-
-        Event shapes:
-          {"type": "context", "customer": ..., "order": ...}
-          {"type": "reasoning", "entries": [...]}              — full trace snapshot so far
-          {"type": "reply_delta", "text": "..."}                — one chunk of the reply
-          {"type": "final", "status": ..., "decision": {...}}   — terminal event for the turn
-
-        Statuses: "gathering_order" / "gathering_reason" (mid-conversation,
-        decision is null), "info" (general question), "needs_identification"
-        (no customer could be identified at all), or a resolved decision
-        status ("approved" / "denied" / "escalated" / "split").
-        """
+        """Generator driving one conversation turn, yielding streaming events."""
         logger = ReasoningLogger(conversation_id)
         logger.log("Orchestrator", "received_message", {"message": message})
 
@@ -137,38 +126,32 @@ class Orchestrator:
         customer, order = self._resolve_identity(state, message, customer_id, email, order_number, logger)
         yield {"type": "context", "customer": customer, "order": order}
 
-        # Switched to a different order mid-conversation — stale reason/decision
-        # state from the previous order no longer applies.
         if order and prior_order_number and order.get("order_number") != prior_order_number:
             state["claimed_issue"] = None
             state["last_validation"] = None
             state["last_decision"] = None
             state["reason_provided"] = False
+            state["order_identified"] = False
             had_prior_context = False
             had_prior_decision = False
 
         classification = self._classify(message, state, logger)
-        # Once a customer asks for a manager, that intent persists across turns —
-        # a follow-up message that's just "MMX-10002" shouldn't un-ask for one.
         wants_manager = bool(classification.get("wants_manager")) or bool(state.get("wants_manager"))
         state["wants_manager"] = wants_manager
         is_pushback = bool(classification.get("is_pushback")) and had_prior_decision
         intent = classification.get("intent", "other")
         message_claimed_issue = (classification.get("claimed_issue") or "").strip()
 
-        # -- Pushback on an already-resolved decision always takes priority. --
         if is_pushback and customer and order:
             logger.log("Orchestrator", "routing_decision", "Customer is pushing back on a prior decision — Refund Resolver will hold the line.")
             reply_text = yield from self._stream_resolver_and_capture_reply(
                 conversation_id, customer, order, message,
-                state.get("last_validation"), wants_manager, True, state.get("last_decision"), logger, state,
+                state.get("last_validation"), wants_manager, True, state.get("last_decision"), logger, state, None
             )
             state["history"].append({"role": "agent", "text": reply_text})
             state["customer"], state["order"] = customer, order
             return
 
-        # -- No customer identified at all: either answer a general question --
-        # -- or fall through to asking for the order (handled below). --------
         if customer is None:
             if intent == "general_question" and not wants_manager:
                 logger.log("Orchestrator", "routing_decision", "General question — replying directly, no refund pipeline needed.")
@@ -193,7 +176,6 @@ class Orchestrator:
             yield {"type": "final", "status": "needs_identification", "decision": None}
             return
 
-        # -- Customer known, order not yet pinned down. -----------------------
         if order is None:
             if intent == "general_question" and not had_prior_context and not wants_manager:
                 logger.log("Orchestrator", "routing_decision", "General question — replying directly, no refund pipeline needed.")
@@ -219,34 +201,25 @@ class Orchestrator:
             yield {"type": "final", "status": "gathering_order", "decision": None}
             return
 
-        # -- From here on, both customer and order are known. ------------------
         state["customer"] = customer
         state["order"] = order
-        state["order_identified"] = True
 
-        # -- Explicit manager request short-circuits reason-gathering. ---------
         if wants_manager:
             logger.log("Orchestrator", "routing_decision", "Customer requested a manager — escalating now.")
             validation = policy_validator.validate(order, message, conversation_id, logger)
             state["last_validation"] = validation["validation"]
             reply_text = yield from self._stream_resolver_and_capture_reply(
                 conversation_id, customer, order, message,
-                validation["validation"], True, False, state.get("last_decision"), logger, state,
+                validation["validation"], True, False, state.get("last_decision"), logger, state, None
             )
             state["history"].append({"role": "agent", "text": reply_text})
             return
 
-        # The reason must come from the customer explicitly saying WHY they
-        # want to return the item (via the classifier's claimed_issue, or a
-        # later turn answering the "why?" question below). Naming the order —
-        # by number or by product name — is identification only; treating any
-        # leftover text around an identifier as a "reason" makes the pipeline
-        # hallucinate a condition the customer never stated.
         known_issue = (state.get("claimed_issue") or "").strip() or message_claimed_issue
 
-        # -- Order just identified this turn, reason still unknown: confirm + ask. --
-        if not known_issue and not had_prior_context:
+        if not known_issue and not state.get("order_identified"):
             state["reason_provided"] = False
+            state["order_identified"] = True
             logger.log("Orchestrator", "routing_decision", "Order identified — confirming details and asking for the reason for return.")
             yield {"type": "reasoning", "entries": list(logger.trace)}
             reply_text = ""
@@ -258,35 +231,40 @@ class Orchestrator:
             yield {"type": "final", "status": "gathering_reason", "decision": None}
             return
 
-        # -- Order already known from a prior turn, still no reason: this ----
-        # -- message IS the answer to "why", even if it doesn't classify as ---
-        # -- an explicit refund request on its own. Never get stuck looping. --
-        if not known_issue and had_prior_context:
+        if not known_issue:
             known_issue = message_claimed_issue or message
 
-        # -- Have both order + reason: resolve. --------------------------------
         state["claimed_issue"] = known_issue
         state["reason_provided"] = True
+        state["order_identified"] = True
+        
         logger.log("Orchestrator", "routing_decision", {
-            "order_identified": state.get("order_identified", False),
-            "reason_provided": state["reason_provided"],
+            "order_identified": True,
+            "reason_provided": True,
             "claimed_issue": known_issue,
-            "note": "Order and reason both known — routing to Policy Validator, then Refund Resolver.",
+            "note": "Order and reason both verified — routing directly to Policy Validator and executing pipeline.",
         })
         augmented_message = message if known_issue.strip() == message.strip() else f"{message}\n\nReason for return: {known_issue}"
-        validation = policy_validator.validate(order, augmented_message, conversation_id, logger)
-        state["last_validation"] = validation["validation"]
-        reply_text = yield from self._stream_resolver_and_capture_reply(
-            conversation_id, customer, order, augmented_message,
-            validation["validation"], False, False, state.get("last_decision"), logger, state,
-        )
+        
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            validation_future = executor.submit(
+                policy_validator.validate, order, augmented_message, conversation_id, logger
+            )
+            
+            reply_text = yield from self._stream_resolver_and_capture_reply(
+                conversation_id, customer, order, augmented_message,
+                None, False, False, state.get("last_decision"), logger, state, validation_future
+            )
+            
         state["history"].append({"role": "agent", "text": reply_text})
 
-    def _stream_resolver_and_capture_reply(self, conversation_id, customer, order, message, validation, wants_manager, is_pushback, prior_decision, logger, state):
+    def _stream_resolver_and_capture_reply(self, conversation_id, customer, order, message, validation, wants_manager, is_pushback, prior_decision, logger, state, validation_future=None):
         """Relay refund_resolver.resolve_stream's events and return the full reply text."""
-        # The customer should only be greeted once per conversation — if any
-        # agent message already exists in the history, the resolver must skip
-        # the "Hi [name]," opener and go straight to the substance.
+        if validation_future is not None:
+            resolved_validation = validation_future.result()
+            validation = resolved_validation["validation"]
+            state["last_validation"] = validation
+
         is_first_agent_message = not any(m.get("role") == "agent" for m in state.get("history", []))
         reply_text = ""
         for event in refund_resolver.resolve_stream(
@@ -330,8 +308,8 @@ class Orchestrator:
         )
 
         response = self.client.messages.create(
-            model=CLAUDE_MODEL,
-            max_tokens=512,
+            model=FAST_REPLY_MODEL,
+            max_tokens=256,
             system=CRM_SYSTEM_PROMPT,
             tools=[crm_lookup.SCHEMA],
             tool_choice={"type": "auto"},
@@ -361,23 +339,6 @@ class Orchestrator:
 
     @staticmethod
     def _select_order(orders: list, target_order_number: str | None, message: str = ""):
-        """Only resolve a specific order when the customer actually named one.
-
-        Knowing the customer (e.g. from a pre-selected demo profile) is not
-        the same as knowing which order they mean — even a customer with a
-        single order should still be asked when they've given zero
-        identifying detail, so the conversation follows the natural "which
-        order, then why" flow rather than silently guessing.
-
-        But a customer who names the item itself ("my Yamaha keyboard
-        showed up broken") HAS identified the order just as much as one who
-        quotes the MMX-##### number — forcing a redundant "which order do
-        you mean?" turn in that case would stall a conversation that
-        already had everything it needed. Falls back to matching the
-        product name's distinctive words against the message, only
-        resolving when exactly one of the customer's orders is a match —
-        an ambiguous or zero match still means "ask", never a guess.
-        """
         if not orders:
             return None
 
@@ -415,8 +376,8 @@ class Orchestrator:
             "prior_decision_this_conversation": state.get("last_decision"),
         }
         response = self.client.messages.create(
-            model=CLAUDE_MODEL,
-            max_tokens=512,
+            model=FAST_REPLY_MODEL,
+            max_tokens=200,
             system=CLASSIFY_SYSTEM_PROMPT,
             tools=[CLASSIFY_SCHEMA],
             tool_choice={"type": "tool", "name": "classify_message"},

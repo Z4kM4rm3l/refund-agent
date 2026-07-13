@@ -1,9 +1,13 @@
 """Flask app for the MelodyMax Gear Refund Agent — backend only.
 
 Endpoints:
-    POST /chat          Run one turn of the agent loop for a conversation, streamed as NDJSON.
-    GET  /admin/logs     All refund decisions and reasoning logs, for the admin dashboard.
-    GET  /customers      All CRM profiles + orders, for demo purposes.
+    POST /chat              Run one turn of the agent loop for a conversation, streamed as NDJSON.
+    GET  /admin/logs        All refund decisions and reasoning logs, for the admin dashboard.
+    GET  /customers         All CRM profiles + orders, for demo purposes.
+    POST /voice/transcribe  Speech-to-text (Whisper). Purely an input adapter in front of /chat —
+                             the transcribed text is sent to /chat exactly like typed text.
+    POST /voice/speak       Text-to-speech (ElevenLabs). Purely an output adapter behind /chat —
+                             only ever called with a reply /chat has already finished streaming.
 
 Conversation state (which customer/order this thread is about, and the last
 decision made) is kept in a simple in-memory dict keyed by conversation_id.
@@ -34,6 +38,7 @@ from flask_cors import CORS
 from backend.agents.orchestrator import Orchestrator
 from backend.config import CORS_ORIGINS, FLASK_DEBUG, FLASK_HOST, FLASK_PORT
 from backend.db.database import get_connection
+from backend.voice import stt, tts
 
 app = Flask(__name__)
 CORS(app, origins=CORS_ORIGINS)
@@ -168,6 +173,51 @@ def customers():
         result.append(customer)
 
     return jsonify({"customers": result})
+
+
+# -- Voice pipeline ---------------------------------------------------------
+#
+# Purely an I/O layer around the existing, unmodified /chat endpoint:
+# /voice/transcribe turns speech into text that the frontend then sends to
+# /chat exactly as if it had been typed; /voice/speak turns a reply /chat
+# has already finished streaming into audio. Neither endpoint touches the
+# orchestrator, agents, tools, or conversation state in any way.
+
+
+@app.route("/voice/transcribe", methods=["POST"])
+def voice_transcribe():
+    audio_bytes = request.get_data()
+    if not audio_bytes:
+        return jsonify({"error": "No audio data received."}), 400
+
+    try:
+        transcribed_text = stt.transcribe(audio_bytes, mimetype=request.content_type)
+    except Exception as exc:  # noqa: BLE001 — let the frontend fall back to text-only on any STT failure
+        traceback.print_exc()
+        return jsonify({"error": str(exc)}), 500
+
+    return jsonify({"transcribed_text": transcribed_text})
+
+
+@app.route("/voice/speak", methods=["POST"])
+def voice_speak():
+    payload = request.get_json(silent=True) or {}
+    text = (payload.get("text") or "").strip()
+    if not text:
+        return jsonify({"error": "text is required"}), 400
+
+    try:
+        # ElevenLabs' convert() returns a lazy iterator — the underlying API
+        # call (and any error it raises) doesn't actually happen until the
+        # iterator is consumed. Consume it fully here, inside the try block,
+        # so a failure surfaces as a clean 500 instead of as a 200 whose body
+        # silently truncates after headers have already gone out.
+        audio_bytes = b"".join(tts.synthesize(text))
+    except Exception as exc:  # noqa: BLE001 — let the frontend fall back to text-only on any TTS failure
+        traceback.print_exc()
+        return jsonify({"error": str(exc)}), 500
+
+    return Response(audio_bytes, mimetype="audio/mpeg")
 
 
 @app.route("/health", methods=["GET"])
