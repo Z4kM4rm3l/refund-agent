@@ -49,6 +49,13 @@ This provides complete visibility into the internal decision pipeline.
 - Automatic scroll management
 - Persistent Light/Dark mode via `localStorage`
 
+### Voice Interaction
+
+- **Microphone button** — click to record a spoken message; audio is transcribed via Whisper and sent through the same chat pipeline as typed text
+- **Speaker toggle** — enables or disables automatic voice playback of agent responses (default: on)
+- Agent replies are streamed as text first, then converted to speech via ElevenLabs once the full response is available
+- All voice features degrade gracefully to text-only mode if API keys are not configured or a request fails
+
 ---
 
 # Tech Stack
@@ -83,11 +90,15 @@ Populate the following variables:
 
 ```text
 ANTHROPIC_API_KEY=...
+CLAUDE_MODEL=claude-sonnet-4-6
+
+OPENAI_API_KEY=...
 
 ELEVENLABS_API_KEY=...
+ELEVENLABS_VOICE_ID=...
 ```
 
-> **Note:** `ELEVENLABS_API_KEY` is only required for voice output.
+> **Note:** `OPENAI_API_KEY` is required for voice input (Whisper transcription). `ELEVENLABS_API_KEY` and `ELEVENLABS_VOICE_ID` are required for voice output (spoken responses). All three voice-related keys are optional — the app runs in text-only mode if they are not configured, with graceful fallback and no errors.
 
 ## 3. Initialize the Database
 
@@ -116,6 +127,23 @@ The backend will be available at:
 ```
 http://localhost:5000
 ```
+
+## 5. Run the Frontend
+
+In a separate terminal, install frontend dependencies and start the dev server:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+The frontend will be available at:
+```
+http://localhost:5173
+```
+
+Vite proxies all `/api` requests to the Flask backend on port 5000, so both servers must be running simultaneously.
 
 ---
 
