@@ -65,3 +65,41 @@ export async function streamChatMessage({ message, conversationId, customerId },
   }
   consumeLine(buffer); // flush any trailing line with no terminating newline
 }
+
+// -- voice pipeline — purely additive I/O around the /chat endpoint above ---
+
+// Sends the raw recorded audio blob as-is (whatever container MediaRecorder
+// produced — webm, ogg, etc.) with its own mimeType as Content-Type, so the
+// backend can read the bytes directly with no reliance on a file extension.
+export async function transcribeAudio(audioBlob) {
+  const response = await fetch("/api/voice/transcribe", {
+    method: "POST",
+    headers: { "Content-Type": audioBlob.type || "application/octet-stream" },
+    body: audioBlob,
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(text || `Transcription failed with status ${response.status}`);
+  }
+
+  const data = await response.json();
+  return data.transcribed_text ?? "";
+}
+
+// Returns an audio Blob (audio/mpeg) for the given text — only ever called
+// with a reply /chat has already finished streaming in full.
+export async function speakText(text) {
+  const response = await fetch("/api/voice/speak", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text }),
+  });
+
+  if (!response.ok) {
+    const errText = await response.text().catch(() => "");
+    throw new Error(errText || `Speech synthesis failed with status ${response.status}`);
+  }
+
+  return response.blob();
+}
