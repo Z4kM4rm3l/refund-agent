@@ -1,52 +1,264 @@
-# MelodyMax Gear — Refund Agent
+# MelodyMax Gear — Refund Agent Vertical Slice
 
-AI customer support agent for a Guitar Center-style music retailer that processes or denies
-e-commerce refunds, using the Claude API with raw function calling across a 3-agent
-architecture (Orchestrator → Policy Validator → Refund Resolver). Backend only for now —
-Flask API + SQLite, no frontend yet.
+A fully functional three-agent AI customer support system for a professional audio and musical instrument retailer. The application automatically approves or denies e-commerce refund requests using deterministic policy logic and raw tool calling via the Anthropic Claude API.
 
-## Setup
+The system is powered by a Flask backend, SQLite database, and a responsive frontend with integrated voice capabilities.
+
+---
+
+# Features
+
+## 🤖 Multi-Agent Architecture
+
+Three specialized agents collaborate to resolve refund requests:
+
+- **Orchestrator** — Intent routing, conversation state management, and execution flow
+- **Policy Validator** — Rule extraction and deterministic policy validation
+- **Refund Resolver** — Final decision-making and streaming customer responses
+
+## 💬 Persistent Conversations
+
+- Tracks conversation state using `conversation_id`
+- Supports multi-turn interactions
+- Handles customer pushback without losing context
+
+## 🎙️ Voice Processing
+
+Integrated speech pipeline featuring:
+
+- **Whisper STT** for speech-to-text
+- **ElevenLabs TTS** for streaming text-to-speech
+- Spoken order number normalization (e.g. `MMX10001` → `MMX-10001`)
+- Dynamic currency formatting
+
+## 📊 Real-Time Admin Dashboard
+
+Live agent reasoning panel displaying:
+
+- Timestamp
+- Agent name
+- Action performed
+- Result
+
+This provides complete visibility into the internal decision pipeline.
+
+## 🎨 Frontend
+
+- Responsive chat interface
+- Customer and agent conversation threads
+- Automatic scroll management
+- Persistent Light/Dark mode via `localStorage`
+
+---
+
+# Tech Stack
+
+- Python
+- Flask
+- SQLite
+- Anthropic Claude API
+- Whisper
+- ElevenLabs
+- HTML/CSS/JavaScript
+
+---
+
+# Setup
+
+## 1. Install Dependencies
 
 ```bash
 pip install -r requirements.txt
-cp .env.example .env   # then add your ANTHROPIC_API_KEY
-python -m backend.db.seed   # creates + seeds backend/db/melodymaxgear.db
-python -m backend.app       # starts the Flask server on :5000
 ```
 
-## Endpoints
+## 2. Configure Environment Variables
 
-- `POST /chat` — `{ "message": "...", "conversation_id"?: "...", "customer_id"?, "email"?, "order_number"? }`
-  Runs one turn of the agent loop and returns the reply, resolved customer/order, the
-  recorded decision, and the full structured reasoning trace for that turn.
-- `GET /admin/logs` — every refund decision ever recorded, plus every reasoning-log entry
-  (timestamp, agent, action, result) from every agent.
-- `GET /customers` — all 15 seeded CRM profiles with their orders, for demo purposes.
+Copy the example configuration:
 
-Conversation state (which customer/order a thread is about, and the last decision made) is
-kept in-memory per `conversation_id` for the life of the process — reuse the same
-`conversation_id` across turns to test pushback handling.
+```bash
+cp .env.example .env
+```
 
-## Demo data
+Populate the following variables:
 
-`backend/db/seed.py` seeds 15 customers/orders covering: 5 clean approvals, 4 denials
-(including an activated software license — the pushback scenario), 3 escalations ($500+,
-missing receipt on a high-value item, and an ambiguous condition claim — the last one needs
-a defect-sounding message at chat time to trigger, since it depends on what the customer
-says), 2 wildcards (holiday extended-window approval, missing receipt on a low-value item),
-and 1 split-eligibility MIDI controller + bundled software license bundle (order `MMX-10015`).
+```text
+ANTHROPIC_API_KEY=...
 
-## Architecture
+ELEVENLABS_API_KEY=...
+```
 
-- `backend/tools/crm_lookup.py` — queries SQLite for customer + order data.
-- `backend/tools/policy_check.py` — deterministic rule engine encoding `policy/refund_policy.md`,
-  including bundle-aware split evaluation and escalation-trigger detection.
-- `backend/tools/refund_decision.py` — records the final decision (and customer-facing reply) to SQLite.
-- `backend/agents/policy_validator.py` — forces a `policy_check` tool call and returns the structured result.
-- `backend/agents/refund_resolver.py` — decides approve/deny/escalate/split and drafts the reply, via a forced `refund_decision` tool call.
-- `backend/agents/orchestrator.py` — identifies the customer (via `crm_lookup`), classifies intent
-  (refund request / pushback / manager request / general question), and routes accordingly.
+> **Note:** `ELEVENLABS_API_KEY` is only required for voice output.
 
-Every agent call emits structured reasoning-log entries (`timestamp`, `agent_name`, `action`,
-`result`) to the `reasoning_logs` table via `backend/utils/logger.py`, streamed back in each
-`/chat` response and queryable in full via `/admin/logs`.
+## 3. Initialize the Database
+
+Seed the SQLite database with mock CRM data:
+
+```bash
+python -m backend.db.seed
+```
+
+This creates:
+
+```
+backend/db/melodymaxgear.db
+```
+
+The database contains **15 customer profiles** designed to exercise a variety of refund scenarios.
+
+## 4. Run the Application
+
+```bash
+python -m backend.app
+```
+
+The backend will be available at:
+
+```
+http://localhost:5000
+```
+
+---
+
+# Seeded Test Scenarios
+
+The database includes **15 mock CRM profiles** covering common and edge-case refund requests.
+
+## ✅ Standard Approvals (5)
+
+Policy-compliant returns.
+
+Example:
+
+- `MMX-10001`
+- Fender Stratocaster
+- **$479.99**
+
+---
+
+## ❌ Policy Denials (4)
+
+Examples include:
+
+- Returns outside the allowed window
+- Activated digital software licenses
+- Customer pushback scenarios
+
+Example:
+
+- `MMX-10007`
+- 25 days after purchase
+
+---
+
+## 👨‍💼 Manager Escalations (3)
+
+Automatically escalated cases such as:
+
+- Refunds over **$500**
+- Missing proof of purchase
+- Ambiguous damage claims
+
+Example:
+
+- `MMX-10010`
+- Taylor Guitar
+- **$999.00**
+
+---
+
+## 🎁 Special Cases (3)
+
+Complex scenarios including:
+
+- Holiday return extensions
+- Mixed hardware/software bundles
+- Split eligibility rules
+
+Example:
+
+- `MMX-10015`
+
+---
+
+# API
+
+## `POST /chat`
+
+Processes customer messages through the multi-agent pipeline.
+
+### Request
+
+```json
+{
+  "message": "...",
+  "conversation_id": "...",
+  "customer_id": 123
+}
+```
+
+`customer_id` is optional.
+
+### Response
+
+Returns:
+
+- Streamed assistant response
+- Parsed CRM information
+- Decision metrics
+- Complete multi-agent reasoning trace
+
+---
+
+## `GET /admin/logs`
+
+Returns the history of refund decisions together with detailed agent reasoning.
+
+---
+
+## `GET /customers`
+
+Returns the seeded CRM profiles for dashboard rendering and debugging.
+
+---
+
+# Project Architecture
+
+## Agents
+
+### `backend/agents/orchestrator.py`
+
+- Routes customer intent
+- Performs CRM identity lookup
+- Manages conversation flow
+- Coordinates downstream agents
+
+### `backend/agents/policy_validator.py`
+
+- Extracts structured policy inputs
+- Maps free-form conversation into deterministic rule checks
+
+### `backend/agents/refund_resolver.py`
+
+- Issues approvals, denials, or manager escalations
+- Streams customer-facing responses
+
+---
+
+## Tools
+
+### `backend/tools/policy_check.py`
+
+Deterministic refund policy engine responsible for:
+
+- Return window validation
+- Bundle handling
+- Holiday return extensions
+- Rule enforcement
+
+### `backend/tools/crm_lookup.py`
+
+Retrieves customer and order information from SQLite.
+
+### `backend/tools/refund_decision.py`
+
+Persists refund decisions and updates transaction state.
